@@ -150,33 +150,37 @@ Win10 1903+ 就有），分发包里不再多塞 18MB。
 
 ### 发版（把更新链路打通）
 
-已发布：<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.2>
-（前一版 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.1>、
-更早 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.0>）
+已发布：<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.3>
+（前一版 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.2>、
+更早 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.1> 和
+<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.0>）
 
 包的形态就是**整个 CutoutKit 目录压成 zip**，`latest.json` 与 zip 一起上传到 Release：
 
 ```powershell
 # 1. 打包，资产名用 ASCII（见下面那条坑）
-Compress-Archive -Path .\CutoutKit\* -DestinationPath .\CutoutKit-portable-v0.2.0.zip -Force
+Compress-Archive -Path .\CutoutKit\* -DestinationPath .\CutoutKit-portable-v0.2.3.zip -Force
 # 2. 算 sha256（大小和哈希都要，更新器两个都校验）
-$h = (Get-FileHash .\CutoutKit-portable-v0.2.0.zip -Algorithm SHA256).Hash.ToLower()
-(Get-Item .\CutoutKit-portable-v0.2.0.zip).Length
+$h = (Get-FileHash .\CutoutKit-portable-v0.2.3.zip -Algorithm SHA256).Hash.ToLower()
+(Get-Item .\CutoutKit-portable-v0.2.3.zip).Length
 # 3. 发版
-gh release create v0.2.0 .\CutoutKit-portable-v0.2.0.zip .\latest.json `
-  -R QiuMr/cutoutkit --target main --title "CutoutKit v0.2.0" --notes "..."
+gh release create v0.2.3 .\CutoutKit-portable-v0.2.3.zip .\latest.json `
+  -R QiuMr/cutoutkit --target main --title "CutoutKit v0.2.3" --notes "..."
 ```
 
-`latest.json` 的格式（仓库里 `latest.json` 已经是 v0.2.0 的样子）：
+`latest.json` 的格式（仓库里 `latest.json` 已经是 v0.2.3 的样子）：
 
 ```json
 {
-  "version": "0.2.0",
-  "notes": "1. 设置页可切 GPU（DirectML）加速；2. 设置页支持检查/一键更新",
-  "url": "https://github.com/QiuMr/cutoutkit/releases/download/v0.2.0/CutoutKit-portable-v0.2.0.zip",
-  "size": 54728811,
-  "sha256": "..."
+  "version": "0.2.3",
+  "notes": "找图默认门槛 0.75 + 门槛只管出口；快速路径收工线 0.93；新增 mkit_last_best_score；复制易语言代码按滑杆阈值",
+  "url": "https://github.com/QiuMr/cutoutkit/releases/download/v0.2.3/CutoutKit-portable-v0.2.3.zip",
+  "size": 0,
+  "sha256": ""
 }
+```
+
+（`size` 填 zip 的实际字节数，`sha256` 填小写十六进制 —— 这两个值由上面第 2 步算出来，别手抄错。）
 ```
 
 **坑：资产名必须是 ASCII。** 第一次发版时 zip 叫 `CutoutKit-便携版.zip`，
@@ -226,11 +230,35 @@ ONNX 里导出的 `iou_prediction` 是未归一化的原始值（会 >1，例如
 | 打开场景图 | 拿一张现成截图当搜索范围 |
 | 准星截屏（主按钮） | 打开时先把桌面截成一张快照当底图，**拖框选一块**（松手即得），或者**单击选一个窗口**（鼠标指着的窗口会有黑框提示），Esc / 右键取消 |
 | ▾ 下拉 | 「截全屏（多显示器合并）」；或直接从窗口列表点一个（最小化窗口会自动还原一下再截回原状） |
-| 最低分 | 拖动即时重算。≥0.95 直接点，0.75~0.95 建议复核，<0.6 别用 |
-| 快速模式 | 开 = 只先试原尺寸档（1080p 约 10~26ms）；关 = 六档全扫（约 60~90ms），不漏缩放实例 |
-| 复制易语言代码 | 生成带模板路径、阈值、坐标的调用片段，直接粘进易语言 |
+| 最低分 | 拖动即时重算。≥0.95 直接点，0.75~0.95 建议复核，<0.6 别用。滑杆默认 0.60 是**调参口径**（看得见候选才好判断它到底算到多低），不是脚本里的建议门槛 |
+| 快速模式 | 开 = 先试原尺寸档，没打出干净命中（<0.93）自动补一轮六档全扫（干净命中 10~26ms，弱命中约 90ms）；关 = 直接六档全扫一趟，同屏有缩放实例也不漏 |
+| 复制易语言代码 | 生成带模板路径、阈值、坐标的调用片段；**滑杆上的阈值会显式写进 `参数.min_score`**，粘过去跑的结果和这一页一致 |
 
 命中框：第一个命中是粗黑框 + 分数标签，其余是细灰框；点结果行复制中心坐标。
+
+### 找图口径统一（v0.2.3）
+
+这一版把「库 / DLL / 界面」三套阈值口径摆正了，并修掉一个会误导人的地方：
+
+- **默认门槛分档**：DLL 零配置入口（`mkit_find_auto` / `mkit_find_multi` / `mkit_options_default`）从 0.35 提到
+  **0.75**（"敢直接点"的线）；库内部（对拍、命令行）仍是 0.35 的调试口径。这页滑杆仍从 0.60 起 ——
+  调参台要看得见低分候选，才判断得出"是没找到还是差一点"。
+- **门槛现在只管出口**：÷8 / ÷4 预筛改用固定常量（0.12 / 0.21 / 0.20），不再按 `min_score` 乘系数派生。
+  以前派生时把门槛抬到 0.75 会连带把入口关小（÷8 门槛 0.1575 → 0.315），亮度打五折或缩放过的实例
+  在原分辨率之前就被丢掉，表现就是"调高门槛后压根找不到"。解耦后 24 个随机场景（缩放 0.8~1.45、
+  亮度 0.35~1.1）在 0.75 门槛下**仍然全中，命中分最低 0.886**，4 张纯背景最高只有 0.22。
+- **快速路径的收工线从固定 0.62 改成 `fast_score`（0.93）**：只有干净命中才一轮收工，弱命中自动补一轮全扫。
+  以前门槛都 0.75 了，一条 0.76 的假峰就能让它以为"够了"，别的尺度上 0.95 的真目标再也没机会被看到。
+- **新增 `mkit_last_best_score()`**（`mkit_version` 110 → 112）：返回这次算到的最高分，**不受门槛影响**。
+  没找到时先看它 —— 0.7 左右说明目标在、只差一点（降门槛再试），0.3 以下说明这一屏真没有；
+  显示 `0.000` 表示连 ÷4 复核的 0.21 分候选都没出现，也就是"连有点像的都没有"。
+  找图页右边的「最佳分数」现在就是它：以前那一格显示的是"返回结果里的最高分"，阈值一抬就变成 `—`，
+  等于把"差多少"这条最有用的信息藏起来了。命中卡片里"没命中"的提示也据此分成两档：
+  ≥0.5 说"只差一点，降阈值再试"，否则说"画面里没有像的东西"。
+- **「复制易语言代码」以前是错的**：它生成 `mkit_find_auto` + 注释里的阈值，而 auto 的真实门槛是 DLL 默认 0.75。
+  滑杆拖到 0.60 就变成"界面说 0.60、代码按 0.75 跑"。现在改成 `mkit_options_default` + `mkit_find`
+  显式传 `参数.min_score`，注释里的数和代码里的数是同一个；顺带在"没找到"分支打印 `mkit_last_best_score`，
+  并把当次的最高分写进注释。
 
 ### 截图：全屏 / 窗口 / 框选，统一进内存（v0.2.2）
 
