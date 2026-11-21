@@ -150,34 +150,41 @@ Win10 1903+ 就有），分发包里不再多塞 18MB。
 
 ### 发版（把更新链路打通）
 
+已发布：<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.0>
+
 包的形态就是**整个 CutoutKit 目录压成 zip**，`latest.json` 与 zip 一起上传到 Release：
 
 ```powershell
-# 1. 打包（目录里必须有 CutoutKit.exe）
-Compress-Archive -Path .\CutoutKit\* -DestinationPath .\CutoutKit-便携版.zip -Force
+# 1. 打包，资产名用 ASCII（见下面那条坑）
+Compress-Archive -Path .\CutoutKit\* -DestinationPath .\CutoutKit-portable-v0.2.0.zip -Force
 # 2. 算 sha256（大小和哈希都要，更新器两个都校验）
-$h = (Get-FileHash .\CutoutKit-便携版.zip -Algorithm SHA256).Hash.ToLower()
-(Get-Item .\CutoutKit-便携版.zip).Length
+$h = (Get-FileHash .\CutoutKit-portable-v0.2.0.zip -Algorithm SHA256).Hash.ToLower()
+(Get-Item .\CutoutKit-portable-v0.2.0.zip).Length
 # 3. 发版
-gh release create v0.2.0 .\CutoutKit-便携版.zip .\latest.json --title "CutoutKit v0.2.0" --notes "..."
+gh release create v0.2.0 .\CutoutKit-portable-v0.2.0.zip .\latest.json `
+  -R QiuMr/cutoutkit --target main --title "CutoutKit v0.2.0" --notes "..."
 ```
 
-`latest.json` 的格式（`发布\latest.json` 已经是 v0.2.0 的样子）：
+`latest.json` 的格式（仓库里 `latest.json` 已经是 v0.2.0 的样子）：
 
 ```json
 {
   "version": "0.2.0",
   "notes": "1. 设置页可切 GPU（DirectML）加速；2. 设置页支持检查/一键更新",
-  "url": "https://github.com/QiuMr/cutoutkit/releases/download/v0.2.0/CutoutKit-便携版.zip",
-  "size": 12345678,
+  "url": "https://github.com/QiuMr/cutoutkit/releases/download/v0.2.0/CutoutKit-portable-v0.2.0.zip",
+  "size": 54728811,
   "sha256": "..."
 }
 ```
 
-注意 `url` 用 `releases/download/<tag>/<asset>` 的直链；**不要**用
-`releases/latest/download/CutoutKit-便携版.zip` —— 中文文件名在 URL 里要转义，
-写死直链最省事。而 `latest.json` 自己走 `releases/latest/download/latest.json`
-（固定资产路径，永远指向最新一个正式 Release），这样程序里的检查地址一次写定。
+**坑：资产名必须是 ASCII。** 第一次发版时 zip 叫 `CutoutKit-便携版.zip`，
+`gh release create` 上传后 GitHub 上变成了 `CutoutKit-.zip`（中文被吃掉），
+于是 `latest.json` 里那条下载地址直接 404。改名（`PATCH /releases/assets/{id}`）
+或一开始就用 ASCII 名都能解决，**别想着在 URL 里 percent-encode 中文然后指望它一直有效**。
+
+`url` 用 `releases/download/<tag>/<asset>` 直链。而 `latest.json` 自己走
+`releases/latest/download/latest.json`（固定资产路径，永远指向最新一个正式 Release），
+所以程序里的检查地址一次写定，发新版本只改 `latest.json` 里的 `version` 与 `url`。
 
 ### 三个候选怎么选
 
