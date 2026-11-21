@@ -150,8 +150,9 @@ Win10 1903+ 就有），分发包里不再多塞 18MB。
 
 ### 发版（把更新链路打通）
 
-已发布：<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.1>
-（上一版 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.0>）
+已发布：<https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.2>
+（前一版 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.1>、
+更早 <https://github.com/QiuMr/cutoutkit/releases/tag/v0.2.0>）
 
 包的形态就是**整个 CutoutKit 目录压成 zip**，`latest.json` 与 zip 一起上传到 Release：
 
@@ -223,12 +224,52 @@ ONNX 里导出的 `iou_prediction` 是未归一化的原始值（会 >1，例如
 | --- | --- |
 | 模板 | 从模板库下拉选，或「打开 PNG」直接选一张透明图；抠图页存的模板会自动带过来 |
 | 打开场景图 | 拿一张现成截图当搜索范围 |
-| 截屏找图 | 截整个虚拟桌面（多显示器一起）后立刻找一遍 |
+| 准星截屏（主按钮） | 打开时先把桌面截成一张快照当底图，**拖框选一块**（松手即得），或者**单击选一个窗口**（鼠标指着的窗口会有黑框提示），Esc / 右键取消 |
+| ▾ 下拉 | 「截全屏（多显示器合并）」；或直接从窗口列表点一个（最小化窗口会自动还原一下再截回原状） |
 | 最低分 | 拖动即时重算。≥0.95 直接点，0.75~0.95 建议复核，<0.6 别用 |
 | 快速模式 | 开 = 只先试原尺寸档（1080p 约 10~26ms）；关 = 六档全扫（约 60~90ms），不漏缩放实例 |
 | 复制易语言代码 | 生成带模板路径、阈值、坐标的调用片段，直接粘进易语言 |
 
 命中框：第一个命中是粗黑框 + 分数标签，其余是细灰框；点结果行复制中心坐标。
+
+### 截图：全屏 / 窗口 / 框选，统一进内存（v0.2.2）
+
+三种来源走同一个捕获层（`src-tauri/src/capture.rs` 的 `Target::{Screen, Window, Region}`），
+出口都是内存里的 RGBA —— **没有临时文件**。
+
+为什么非要"不落盘"：以前的路线是「截图 → 存 `%TEMP%\CutoutKit\shot-xxx.png` → 再读回来找图」，
+多一次磁盘往返，还留下了"清理软件把临时图扫了、页面上还拿着旧路径"的坑（v0.2.1 那条
+「读图失败 E:\...」就是这么来的）。现在截图直接进内存的 `ShotStore`（留最近 4 张），
+拖阈值重算只发一个图片 id，不再重新截屏，也不怕临时目录被清。
+
+窗口截图的两条硬经验：
+
+- **`PrintWindow(PW_RENDERFULLCONTENT=2)`**：对 WebView2 / Chromium / Electron 这类窗口，
+  即使被别的窗口挡住、甚至不可见，也能拿到它自己的完整渲染；窗口矩形用
+  `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 取，比 `GetWindowRect` 准
+  （后者把外面的阴影和圆角透明边一起算进去，截出来四边各多一圈白）。
+- **最小化窗口会返回全黑**：抽样 2000 个点判"几乎全黑"后走兜底 —— `ShowWindow(SW_RESTORE)`
+  + 置顶 + 等 220ms + `BitBlt` 抓那块矩形 + 还原成最小化。用户看到的是"闪一下"，拿到的是对的图。
+
+准星那层不快照就不行：Windows + WebView2 的**真透明窗口在这台机器上做不到**
+（`transparent(true)` + `background_color(0,0,0,0)` + CSS 全透明都试过，整屏被那层白底糊成
+均匀灰板，只有提示条能正常渲染）。所以改成「打开准星那一刻先把桌面截成快照当底图」，
+上面压 26% 黑，拖框时恢复亮度、框外继续压暗；**区域直接从这张快照裁**（坐标就是虚拟桌面坐标，
+底图原点即虚拟桌面原点），好处是框选期间画面不闪、框到的百分百就是用户看到的那块。
+
+坐标一律物理像素：捕获前把线程切到 `PER_MONITOR_AWARE_V2`，准星窗口按物理像素铺满整个虚拟桌面，
+前端量到的是逻辑像素，所以乘 `devicePixelRatio` 再叠虚拟桌面原点。150% 缩放下也不会偏。
+
+顺手修掉的三个坑（都会让"看起来很简单"的功能直接不可用）：
+
+| 现象 | 原因 | 做法 |
+| --- | --- | --- |
+| 快照里有个半透明的自己 | Win11 隐藏窗口有淡出合成，截太快把正在消失的主窗口糊进去了 | 隐藏后等 420ms 再截 |
+| 从界面点「准星截屏」窗口停在 800×600、里面全黑、右键没反应 | 从 IPC 线程直接建 WebView2 窗口，`set_position/set_size/show` 全部静默失效 | 整个开窗过程回主线程跑，几何交给 builder 一次定好（builder 只认逻辑像素，按所在显示器缩放换算） |
+| 鼠标指着窗口却不高亮 | `WindowFromPoint` 命中的永远是铺满全屏的准星自己，再被"跳过自己"过滤成 None | 改成从 z 序顶端往下逐个命中测试（跳过自己 / 桌面 / 任务栏 / cloaked 窗口） |
+
+在抠图页点了准星也没关系：截完会自动切到找图页，并把那张图一起带过去（主窗口自己监听
+`shot://ready`，找图页不在前台时由 App 转交）。
 
 ### 文件不在了会说人话（v0.2.1）
 
@@ -325,6 +366,11 @@ CutoutKit.exe --try "D:\模板\药水瓶.png"          # 开在找图页 + 立�
 CutoutKit.exe --engine dml --selftest "ui1.png"   # 用 GPU 跑自检（排障用）
 CutoutKit.exe --selftest "ui1.png" "ui2.png"      # 无窗口批量抠图（多张=批量）
 CutoutKit.exe --findtest "D:\模板\药水瓶.png"     # 无窗口找图，结果写 findtest.log
+CutoutKit.exe --overlay                           # 启动就直接开准星（快捷方式/排障用）
+CutoutKit.exe --shot D:\out\屏幕.png              # 截全屏存一张（写 shot.log）
+CutoutKit.exe --shot D:\out\窗口.png --hwnd 12345 # 截指定窗口句柄
+CutoutKit.exe --shot D:\out\区域.png --rect 300,100,400,260   # 截一块区域
+CutoutKit.exe --shotlist                          # 把可截的窗口列进 shotlist.log
 ```
 
 `--engine cpu|dml` 覆盖配置文件里的引擎选择，只影响这次运行，不会写回配置。
@@ -343,6 +389,11 @@ CutoutKit.exe --findtest "D:\模板\药水瓶.png"     # 无窗口找图，结�
 
 `--findtest` 也是无窗口：截全屏 → 用给的模板找一遍 → 把命中坐标/分数/耗时写 `findtest.log`，
 同时把这次截屏留成 PNG（路径写在日志里）。做回归测试或排查「为什么线上找不到」很方便。
+
+`--shot` / `--shotlist` 是截图能力的命令行入口，**只在排障和脚本里用**（正常使用时截图不落盘）：
+`--shot out.png` 默认截整个虚拟桌面，`--hwnd` 换成某个窗口、`--rect x,y,w,h` 换成一块区域，
+尺寸/耗时/是否走了黑图兜底都写进 exe 旁边的 `shot.log`；`--shotlist` 把可截的窗口
+（含标题、进程、尺寸、是否最小化）列进 `shotlist.log`，用它取 `--hwnd` 的值。
 
 ```txt
 模板 ...\crop_tpl2.png
